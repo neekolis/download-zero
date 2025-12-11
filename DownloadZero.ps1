@@ -7,7 +7,7 @@ $global:paused = $false
 $global:debug = $false # Start disabled for production
 
 # --- Auto-Update ---
-$appVersion = "1.1.0"
+$appVersion = "1.1.1"
 $updateUrl = "https://raw.githubusercontent.com/neekolis/download-zero/main/version.json"
 
 # Get actual Downloads folder path from Registry (handles redirected folders)
@@ -36,14 +36,29 @@ function Log-Message($msg) {
     }
 }
 
+$global:setupComplete = $false
+
 function Load-Config {
     Log-Message "Loading configuration..."
     if (Test-Path $configFile) {
         try {
             $jsonContent = Get-Content $configFile -Raw
             $json = $jsonContent | ConvertFrom-Json
+            
             $global:rules = @{}
-            foreach ($item in $json) {
+            $rulesRaw = $null
+
+            # Handle Schema Migration (Array -> Object)
+            if ($json -is [System.Array]) {
+                $rulesRaw = $json
+                $global:setupComplete = $false
+            }
+            else {
+                $rulesRaw = $json.Rules
+                $global:setupComplete = $json.SetupComplete
+            }
+
+            foreach ($item in $rulesRaw) {
                 # Ensure extension starts with .
                 $ext = $item.Extension
                 if (-not $ext.StartsWith(".")) { $ext = "." + $ext }
@@ -83,11 +98,58 @@ function Get-Default-Rules {
 }
 
 function Save-Config {
-    $list = @()
+    $ruleList = @()
     foreach ($key in $global:rules.Keys) {
-        $list += @{ Extension = $key; Folder = $global:rules[$key] }
+        $ruleList += @{ Extension = $key; Folder = $global:rules[$key] }
     }
-    $list | ConvertTo-Json | Set-Content $configFile
+    
+    $configData = @{
+        SetupComplete = $global:setupComplete
+        Rules         = $ruleList
+    }
+
+    $configData | ConvertTo-Json -Depth 5 | Set-Content $configFile
+}
+
+function Check-Shortcuts {
+    if ($global:setupComplete) { return }
+
+    $shortcutPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\DownloadZero.lnk"
+    
+    if (-not (Test-Path $shortcutPath)) {
+        $result = [System.Windows.Forms.MessageBox]::Show(
+            "Would you like to add DownloadZero to your Start Menu?", 
+            "First Run Setup", 
+            [System.Windows.Forms.MessageBoxButtons]::YesNo, 
+            [System.Windows.Forms.MessageBoxIcon]::Question
+        )
+
+        if ($result -eq "Yes") {
+            try {
+                $WshShell = New-Object -comObject WScript.Shell
+                $Shortcut = $WshShell.CreateShortcut($shortcutPath)
+                $Shortcut.TargetPath = "powershell.exe"
+                $Shortcut.Arguments = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$PSScriptRoot\DownloadZero.ps1`""
+                $Shortcut.WorkingDirectory = "$PSScriptRoot"
+                if (Test-Path (Join-Path $PSScriptRoot "icon.ico")) {
+                    $Shortcut.IconLocation = (Join-Path $PSScriptRoot "icon.ico")
+                }
+                else {
+                    $Shortcut.IconLocation = "shell32.dll,4"
+                }
+                $Shortcut.Description = "Automatically sorts files in Downloads"
+                $Shortcut.Save()
+                [System.Windows.Forms.MessageBox]::Show("Shortcut created!", "DownloadZero")
+            }
+            catch {
+                [System.Windows.Forms.MessageBox]::Show("Failed to create shortcut.`n$_", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            }
+        }
+    }
+    
+    # Mark setup as complete so we don't ask again (unless config is deleted)
+    $global:setupComplete = $true
+    Save-Config
 }
 
 # --- Settings UI ---
@@ -396,6 +458,7 @@ function Scan-Downloads {
 # --- Initialization ---
 
 Load-Config
+Check-Shortcuts
 Scan-Downloads
 
 # --- Watcher ---
