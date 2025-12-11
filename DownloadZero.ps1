@@ -7,7 +7,7 @@ $global:paused = $false
 $global:debug = $false # Start disabled for production
 
 # --- Auto-Update ---
-$appVersion = "1.0.0"
+$appVersion = "1.1.0"
 $updateUrl = "https://raw.githubusercontent.com/neekolis/download-zero/main/version.json"
 
 # Get actual Downloads folder path from Registry (handles redirected folders)
@@ -366,7 +366,7 @@ function Process-File($filePath) {
             }
 
             # Wait for file handle release
-            Start-Sleep -Milliseconds 100
+            Start-Sleep -Milliseconds 10
             
             Move-Item -LiteralPath $filePath -Destination $targetPath -Force -ErrorAction Stop
             Log-Message "Moved to $targetPath"
@@ -380,11 +380,16 @@ function Process-File($filePath) {
 function Scan-Downloads {
     if ($global:paused) { return }
     Log-Message "Scanning Downloads folder: $downloadsPath"
-    # Process all existing files in Downloads
-    $files = Get-ChildItem -Path $downloadsPath -File
-    Log-Message "Values found: $($files.Count)"
-    foreach ($file in $files) {
-        Process-File $file.FullName
+    try {
+        # Use .NET EnumerateFiles for v1.1 performance
+        $files = [System.IO.Directory]::EnumerateFiles($downloadsPath)
+        Log-Message "Scanning..."
+        foreach ($file in $files) {
+            Process-File $file
+        }
+    }
+    catch {
+        Log-Message "Error scanning: $_"
     }
 }
 
