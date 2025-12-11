@@ -10,6 +10,11 @@ $global:debug = $false # Start disabled for production
 $appVersion = "1.1.2"
 $updateUrl = "https://raw.githubusercontent.com/neekolis/download-zero/main/version.json"
 
+# --- Icon Embedding ---
+# --- Icon Embedding ---
+# (Removed in v1.1.2: Using native system icons instead)
+
+
 # --- Single Instance Check ---
 $mutexName = "Global\DownloadZeroAppMutex"
 $mutex = New-Object System.Threading.Mutex($false, $mutexName)
@@ -37,7 +42,7 @@ $global:rules = @{}
 
 $logFile = Join-Path $PSScriptRoot "debug.log"
 
-function Log-Message($msg) {
+function Write-Log($msg) {
     if ($global:debug) {
         $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         "$timestamp - $msg" | Out-File -FilePath $logFile -Append
@@ -46,8 +51,8 @@ function Log-Message($msg) {
 
 $global:setupComplete = $false
 
-function Load-Config {
-    Log-Message "Loading configuration..."
+function Import-Config {
+    Write-Log "Loading configuration..."
     if (Test-Path $configFile) {
         try {
             $jsonContent = Get-Content $configFile -Raw
@@ -72,15 +77,15 @@ function Load-Config {
                 if (-not $ext.StartsWith(".")) { $ext = "." + $ext }
                 $global:rules[$ext.ToLower()] = $item.Folder
             }
-            Log-Message "Config loaded. Rules count: $($global:rules.Count)"
+            Write-Log "Config loaded. Rules count: $($global:rules.Count)"
         }
         catch {
-            Log-Message "Error loading config: $_"
+            Write-Log "Error loading config: $_"
             Get-Default-Rules
         }
     }
     else {
-        Log-Message "Config file not found. Creating defaults."
+        Write-Log "Config file not found. Creating defaults."
         Get-Default-Rules
     }
 }
@@ -102,10 +107,10 @@ function Get-Default-Rules {
         ".ics"  = "Calendar Items"
         ".vcs"  = "Calendar Items"
     }
-    Save-Config # Create the file
+    Export-Config # Create the file
 }
 
-function Save-Config {
+function Export-Config {
     $ruleList = @()
     foreach ($key in $global:rules.Keys) {
         $ruleList += @{ Extension = $key; Folder = $global:rules[$key] }
@@ -119,7 +124,7 @@ function Save-Config {
     $configData | ConvertTo-Json -Depth 5 | Set-Content $configFile
 }
 
-function Check-Shortcuts {
+function Test-Shortcut {
     if ($global:setupComplete) { return }
 
     $shortcutPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\DownloadZero.lnk"
@@ -139,12 +144,8 @@ function Check-Shortcuts {
                 $Shortcut.TargetPath = "powershell.exe"
                 $Shortcut.Arguments = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$PSScriptRoot\DownloadZero.ps1`""
                 $Shortcut.WorkingDirectory = "$PSScriptRoot"
-                if (Test-Path (Join-Path $PSScriptRoot "icon.ico")) {
-                    $Shortcut.IconLocation = (Join-Path $PSScriptRoot "icon.ico")
-                }
-                else {
-                    $Shortcut.IconLocation = "shell32.dll,4"
-                }
+                $Shortcut.WorkingDirectory = "$PSScriptRoot"
+                $Shortcut.IconLocation = "shell32.dll,4" # Standard Folder Icon
                 $Shortcut.Description = "Automatically sorts files in Downloads"
                 $Shortcut.Save()
                 [System.Windows.Forms.MessageBox]::Show("Shortcut created!", "DownloadZero")
@@ -157,12 +158,12 @@ function Check-Shortcuts {
     
     # Mark setup as complete so we don't ask again (unless config is deleted)
     $global:setupComplete = $true
-    Save-Config
+    Export-Config
 }
 
 # --- Settings UI ---
 
-function Check-Update($manual = $false) {
+function Get-Update($manual = $false) {
     try {
         $webClient = New-Object System.Net.WebClient
         $jsonStr = $webClient.DownloadString($updateUrl)
@@ -180,7 +181,7 @@ function Check-Update($manual = $false) {
             )
 
             if ($result -eq "Yes") {
-                Perform-Update $json.url
+                Invoke-Update $json.url
             }
         }
         elseif ($manual) {
@@ -194,7 +195,7 @@ function Check-Update($manual = $false) {
     }
 }
 
-function Perform-Update($scriptUrl) {
+function Invoke-Update($scriptUrl) {
     try {
         $tempFile = Join-Path $env:TEMP "DownloadZero_New.ps1"
         $webClient = New-Object System.Net.WebClient
@@ -312,8 +313,8 @@ function Show-Unsorted {
         }
         
         if ($changesMade) {
-            Save-Config
-            Scan-Downloads
+            Export-Config
+            Invoke-DownloadScan
             [System.Windows.Forms.MessageBox]::Show("Rules saved and files sorted!", "DownloadZero")
         }
     }
@@ -401,14 +402,14 @@ function Show-Settings {
             }
         }
         $global:rules = $newRules
-        Save-Config
-        Scan-Downloads
+        Export-Config
+        Invoke-DownloadScan
     }
 }
 
 # --- Logic ---
 
-function Process-File($filePath) {
+function Invoke-FileSort($filePath) {
     if ($global:paused) { return }
     if (!(Test-Path -LiteralPath $filePath -PathType Leaf)) { return }
 
@@ -416,7 +417,7 @@ function Process-File($filePath) {
     if ($global:rules.ContainsKey($ext)) {
         try {
             $folderName = $global:rules[$ext]
-            Log-Message "Processing $filePath -> $folderName"
+            Write-Log "Processing $filePath -> $folderName"
             $targetDir = Join-Path $downloadsPath $folderName
             
             if (!(Test-Path $targetDir)) {
@@ -439,35 +440,35 @@ function Process-File($filePath) {
             Start-Sleep -Milliseconds 10
             
             Move-Item -LiteralPath $filePath -Destination $targetPath -Force -ErrorAction Stop
-            Log-Message "Moved to $targetPath"
+            Write-Log "Moved to $targetPath"
         }
         catch {
-            Log-Message "Error moving file: $_"
+            Write-Log "Error moving file: $_"
         }
     }
 }
 
-function Scan-Downloads {
+function Invoke-DownloadScan {
     if ($global:paused) { return }
-    Log-Message "Scanning Downloads folder: $downloadsPath"
+    Write-Log "Scanning Downloads folder: $downloadsPath"
     try {
         # Use .NET EnumerateFiles for v1.1 performance
         $files = [System.IO.Directory]::EnumerateFiles($downloadsPath)
-        Log-Message "Scanning..."
+        Write-Log "Scanning..."
         foreach ($file in $files) {
-            Process-File $file
+            Invoke-FileSort $file
         }
     }
     catch {
-        Log-Message "Error scanning: $_"
+        Write-Log "Error scanning: $_"
     }
 }
 
 # --- Initialization ---
 
-Load-Config
-Check-Shortcuts
-Scan-Downloads
+Import-Config
+Test-Shortcut
+Invoke-DownloadScan
 
 # --- Watcher ---
 
@@ -479,7 +480,7 @@ $watcher.EnableRaisingEvents = $true
 
 $action = {
     $path = $Event.SourceEventArgs.FullPath
-    Process-File $path
+    Invoke-FileSort $path
 }
 
 Register-ObjectEvent $watcher "Created" -Action $action | Out-Null
@@ -487,15 +488,9 @@ Register-ObjectEvent $watcher "Renamed" -Action $action | Out-Null
 
 # --- UI ---
 
-$iconPath = Join-Path $PSScriptRoot "icon.ico"
 $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
 
-if (Test-Path $iconPath) {
-    $notifyIcon.Icon = [System.Drawing.Icon]::new($iconPath)
-}
-else {
-    $notifyIcon.Icon = [System.Drawing.SystemIcons]::Application
-}
+$notifyIcon.Icon = [System.Drawing.SystemIcons]::Application
 
 $notifyIcon.Text = "DownloadZero"
 $notifyIcon.Visible = $true
@@ -518,14 +513,13 @@ $menuItemPause.add_Click({
             $notifyIcon.BalloonTipTitle = "DownloadZero Resumed"
             $notifyIcon.BalloonTipText = "Scanning for files..."
             $notifyIcon.ShowBalloonTip(3000)
-            Scan-Downloads # Catch up on anything missed
+            Invoke-DownloadScan # Catch up on anything missed
         }
     })
 
 $contextMenu.MenuItems.Add("-")
 
 # Menu: Run on Startup
-$startupFolder = "shell:startup" # Special folder handling needs shell object or hard path
 $startupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\DownloadZero.lnk"
 
 $menuItemStartup = $contextMenu.MenuItems.Add("Run on Startup")
@@ -574,7 +568,7 @@ $contextMenu.MenuItems.Add("-")
 
 $menuItemScan = $contextMenu.MenuItems.Add("Scan Now")
 $menuItemScan.add_Click({
-        Scan-Downloads
+        Invoke-DownloadScan
         $notifyIcon.BalloonTipTitle = "Scan Complete"
         $notifyIcon.BalloonTipText = "Downloads folder scanned."
         $notifyIcon.ShowBalloonTip(3000)
@@ -584,7 +578,7 @@ $contextMenu.MenuItems.Add("-")
 
 $menuItemUpdate = $contextMenu.MenuItems.Add("Check for Updates")
 $menuItemUpdate.add_Click({
-        Check-Update -manual $true
+        Get-Update -manual $true
     })
 
 $contextMenu.MenuItems.Add("-")
