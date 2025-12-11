@@ -1,6 +1,6 @@
 # DownloadZero
 
-**DownloadZero** is a tiny, powerful utility that automatically sorts your Downloads folder on Windows. It sits in your system tray and organizes files into subfolders based on your rules.
+**DownloadZero** is a tiny, customizable utility that automatically sorts your Downloads folder on Windows. It sits in your system tray and organizes files into subfolders based on your rules.
 
 ## Features
 - **Automatic Sorting**: Files are sorted instantly when they arrive in Downloads.
