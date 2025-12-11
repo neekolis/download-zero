@@ -7,8 +7,16 @@ $global:paused = $false
 $global:debug = $false # Start disabled for production
 
 # --- Auto-Update ---
-$appVersion = "1.1.1"
+$appVersion = "1.1.2"
 $updateUrl = "https://raw.githubusercontent.com/neekolis/download-zero/main/version.json"
+
+# --- Single Instance Check ---
+$mutexName = "Global\DownloadZeroAppMutex"
+$mutex = New-Object System.Threading.Mutex($false, $mutexName)
+if (-not $mutex.WaitOne(0, $false)) {
+    [System.Windows.Forms.MessageBox]::Show("DownloadZero is already running.", "DownloadZero", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+    exit
+}
 
 # Get actual Downloads folder path from Registry (handles redirected folders)
 try {
